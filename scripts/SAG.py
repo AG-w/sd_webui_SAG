@@ -433,7 +433,7 @@ class Script(scripts.Script):
             .repeat(1, latent_channel, 1, 1)
             .type(attn_map.dtype)
         )
-        attn_mask = F.interpolate(attn_mask, (latent_h, latent_w), mode=="nearest-exact" if not sag_method_bilinear else "bilinear")
+        attn_mask = F.interpolate(attn_mask, (latent_h, latent_w), mode="nearest-exact" if not sag_method_bilinear else "bilinear")
 
         # Adaptive blur sigma and Gaussian blur
         adaptive_sigma = sag_blur_sigma * scale_factor
