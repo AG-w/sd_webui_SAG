@@ -333,11 +333,6 @@ class Script(scripts.Script):
             "text_uncond": current_uncond_emb,
         }
 
-        # Initialize current_degraded_pred when params is available
-        global current_degraded_pred
-        if current_degraded_pred is None:  # Check if it's the first call
-            current_degraded_pred = torch.zeros_like(params.x)
-
         #6.25 and 2.5 are decided by testing, there might be better scale number
         global saved_original_selfattn_forward
         if sag_attn_target == "dynamic":
@@ -350,7 +345,6 @@ class Script(scripts.Script):
                 if current_sag_block_index == 1:
                     attn_module = get_attention_module_for_block(shared.sd_model.model.diffusion_model.output_blocks[5], '0')
                     attn_module.forward = saved_original_selfattn_forward
-
                     # Fallback logic for block8
                     try:
                         if shared.sd_model.is_sd1:
@@ -373,7 +367,6 @@ class Script(scripts.Script):
                 if current_sag_block_index == 0:
                     attn_module = get_attention_module_for_block(shared.sd_model.model.diffusion_model.middle_block, '1')
                     attn_module.forward = saved_original_selfattn_forward
-
                     # Fallback logic for block5
                     try:
                         org_attn_module = shared.sd_model.model.diffusion_model.output_blocks[5]._modules['1'].transformer_blocks._modules['0'].attn1
@@ -386,12 +379,8 @@ class Script(scripts.Script):
                     org_attn_module.forward = xattn_forward_log.__get__(org_attn_module, org_attn_module.__class__)
                     current_sag_block_index = 1
 
-        if current_degraded_pred is None:  # Check if it's the first call
-            current_degraded_pred = torch.zeros_like(params.x)
               
     def denoised_callback(self, params: CFGDenoisedParams):
-        global current_degraded_pred_compensation, current_degraded_pred
-
         if not sag_enabled:
             return
 
@@ -416,18 +405,16 @@ class Script(scripts.Script):
             "block8": 4,
             "middle": 1
         }.get(sag_attn_target, 1) # Default to 1 if sag_attn_target is invalid
-
-        attn_map = attn_map.reshape(b, h, hw1, hw2)
          
         # Dynamic middle layer size calculation
         middle_layer_latent_size = [
-            math.ceil(latent_h / (h * block_scale)),
-            math.ceil(latent_w / (h * block_scale))
+            math.ceil(latent_h / h) * block_scale,
+            math.ceil(latent_w / h) * block_scale
         ]
         if middle_layer_latent_size[0] * middle_layer_latent_size[1] < hw1:
             middle_layer_latent_size = [
-                math.ceil(latent_h / ((h/2) * block_scale)),
-                math.ceil(latent_w / ((h/2) * block_scale))
+                math.ceil(latent_h / (h/2)) * block_scale,
+                math.ceil(latent_w / (h/2)) * block_scale
             ]
 
         # Get reference resolution
@@ -438,12 +425,19 @@ class Script(scripts.Script):
         adaptive_threshold = sag_mask_threshold * scale_factor
        
         # Calculate attention mask and ensure correct dimensions
+        attn_map = attn_map.reshape(b, h, hw1, hw2)        
         attn_mask = (attn_map.mean(1).sum(1) > adaptive_threshold).float()
-        attn_mask = F.interpolate(attn_mask.unsqueeze(1).unsqueeze(1), (latent_h, latent_w), mode=="nearest-exact" if not sag_method_bilinear else "bilinear").squeeze(1)
+        attn_mask = (
+            attn_mask.reshape(b, middle_layer_latent_size[0], middle_layer_latent_size[1])
+            .unsqueeze(1)
+            .repeat(1, latent_channel, 1, 1)
+            .type(attn_map.dtype)
+        )
+        attn_mask = F.interpolate(attn_mask, (latent_h, latent_w), mode=="nearest-exact" if not sag_method_bilinear else "bilinear")
 
         # Adaptive blur sigma and Gaussian blur
         adaptive_sigma = sag_blur_sigma * scale_factor
-        degraded_latents = adaptive_gaussian_blur_2d(original_latents, sigma=adaptive_sigma) * attn_mask.unsqueeze(1).expand_as(original_latents) + original_latents * (1 - attn_mask.unsqueeze(1).expand_as(original_latents))
+        degraded_latents = adaptive_gaussian_blur_2d(original_latents, sigma=adaptive_sigma) * attn_mask + original_latents * (1 - attn_mask)
 
         renoised_degraded_latent = degraded_latents - (uncond_output - current_xin)
        
@@ -461,6 +455,7 @@ class Script(scripts.Script):
             cond = {"c_crossattn": [current_unet_kwargs['text_uncond']], "c_concat": [current_unet_kwargs['image_cond']]}
             degraded_pred = params.inner_model(renoised_degraded_latent, current_unet_kwargs['sigma'], cond=cond)
 
+        global current_degraded_pred_compensation, current_degraded_pred
         current_degraded_pred_compensation = uncond_output - degraded_latents
         current_degraded_pred = degraded_pred
 
@@ -468,29 +463,6 @@ class Script(scripts.Script):
         logger.info(f"Original latents shape: {original_latents.shape}")
         logger.info(f"Middle layer latent size: {middle_layer_latent_size}")
 
-        # Calculate the correct size for reshaping
-        total_elements = attn_mask.numel()
-        target_elements_per_batch = total_elements // b
-
-        def find_closest_factors(num, target_h, target_w):
-            h = target_h
-            w = target_w
-            while h * w != num:
-                if h * w < num:
-                    w += 1
-                else:
-                    h -= 1
-            return h, w
-
-        # Find the factors closest to middle_layer_latent_size
-        new_height, new_width = find_closest_factors(target_elements_per_batch, middle_layer_latent_size[0], middle_layer_latent_size[1])
-
-        attn_mask = (
-            attn_mask.reshape(b, new_height, new_width)
-            .unsqueeze(1)
-            .repeat(1, latent_channel, 1, 1)
-            .type(attn_map.dtype)
-        )
 
     def cfg_after_cfg_callback(self, params: AfterCFGCallbackParams):
         if not sag_enabled:
@@ -518,10 +490,10 @@ class Script(scripts.Script):
 
     def postprocess(self, p, processed, *args):
         enabled, scale, sag_mask_threshold, blur_sigma, method, attn, custom_resolution = args
-        if enabled and hasattr(self, "saved_original_selfattn_forward"):  # Check if SAG was enabled and the forward method was saved
+        if enabled: # Check if SAG was enabled
             attn_module = self.get_attention_module(attn)  # Get the attention module
             if attn_module is not None:  # Check if we successfully got the attention module
-                attn_module.forward = self.saved_original_selfattn_forward  # Restore the original forward method
+                attn_module.forward = saved_original_selfattn_forward  # Restore the original forward method
         return
 
     def get_attention_module(self, attn):
