@@ -409,7 +409,7 @@ class Script(scripts.Script):
             self.callbacks_added = True
         return
 
-    def postprocess(self, p, processed, *args):
+    def postprocess_batch(self, p, processed, *args):
         enabled, scale, sag_mask_threshold, blur_sigma, method, attn = args
         if enabled:
             # restore original self attention module forward function
