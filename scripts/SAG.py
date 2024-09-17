@@ -488,7 +488,7 @@ class Script(scripts.Script):
          
         params.output_altered = True
 
-    def postprocess(self, p, processed, *args):
+    def postprocess_batch(self, p, processed, *args):
         enabled, scale, sag_mask_threshold, blur_sigma, method, attn, custom_resolution = args
         if enabled: # Check if SAG was enabled
             attn_module = self.get_attention_module(attn)  # Get the attention module
