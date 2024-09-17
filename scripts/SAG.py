@@ -426,7 +426,7 @@ class Script(scripts.Script):
        
         # Calculate attention mask and ensure correct dimensions
         attn_map = attn_map.reshape(b, h, hw1, hw2)        
-        attn_mask = (attn_map.mean(1).sum(1) > adaptive_threshold).float()
+        attn_mask = (attn_map.mean(1).sum(1) > adaptive_threshold)
         attn_mask = (
             attn_mask.reshape(b, middle_layer_latent_size[0], middle_layer_latent_size[1])
             .unsqueeze(1)
