@@ -333,7 +333,7 @@ class Script(scripts.Script):
             "text_uncond": current_uncond_emb,
         }
 
-        #6.25 and 2.5 are decided by testing, there might be better scale number
+        #6.25 (0.15) and 2.5 (0.4) are decided by testing, there might be better scale number
         global saved_original_selfattn_forward
         if sag_attn_target == "dynamic":
             if current_sag_block_index == -1:
@@ -341,7 +341,7 @@ class Script(scripts.Script):
                 saved_original_selfattn_forward = org_attn_module.forward
                 org_attn_module.forward = xattn_forward_log.__get__(org_attn_module, org_attn_module.__class__)
                 current_sag_block_index = 0
-            elif torch.any(current_unet_kwargs['sigma'] < current_max_sigma / 6.25):
+            elif torch.any(current_unet_kwargs['sigma'] < current_max_sigma * 0.15):
                 if current_sag_block_index == 1:
                     attn_module = get_attention_module_for_block(shared.sd_model.model.diffusion_model.output_blocks[5], '0')
                     attn_module.forward = saved_original_selfattn_forward
@@ -363,7 +363,7 @@ class Script(scripts.Script):
                     current_sag_block_index = 2
 
             # Handle the absence of '1' for the output_blocks[5] module 
-            elif torch.any(current_unet_kwargs['sigma'] < current_max_sigma / 2.5):
+            elif torch.any(current_unet_kwargs['sigma'] < current_max_sigma * 0.4):
                 if current_sag_block_index == 0:
                     attn_module = get_attention_module_for_block(shared.sd_model.model.diffusion_model.middle_block, '1')
                     attn_module.forward = saved_original_selfattn_forward
