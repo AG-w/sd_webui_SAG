@@ -34,7 +34,7 @@ def adaptive_gaussian_blur_2d(img, sigma, kernel_size=None):
     if kernel_size is None:
         kernel_size = max(5, int(sigma * 4 + 1))
         kernel_size = kernel_size + 1 if kernel_size % 2 == 0 else kernel_size
-        kernel_size = kernel_size ** 2
+        kernel_size = min(81, kernel_size ** 2)
 
     ksize_half = (kernel_size - 1) * 0.5
     x = torch.linspace(-ksize_half, ksize_half, steps=kernel_size)
@@ -183,8 +183,10 @@ def xattn_forward_log(self, x, context=None, mask=None, additional_tokens=None, 
     return out
 
 # Global variable declarations
-global current_degraded_pred_compensation, current_degraded_pred
 current_degraded_pred = None # Initialize as None to indicate it hasn't been set yet
+current_degraded_pred_compensation = None
+current_attn = None
+saved_original_selfattn_forward = None
 
 def get_attention_module_for_block(block, layer_name):
     fallback_order = ["0", "1"]  # Fallback layer names within the block
@@ -271,9 +273,14 @@ class Script(scripts.Script):
     
     def process(self, p: StableDiffusionProcessing, *args):
         enabled, scale, mask_threshold, blur_sigma, method, attn, custom_resolution = args
-        global sag_enabled, sag_mask_threshold, sag_blur_sigma, sag_method_bilinear, sag_attn_target, current_sag_guidance_scale
+        global sag_enabled, sag_mask_threshold, sag_blur_sigma, sag_method_bilinear, sag_attn_target, current_sag_guidance_scale, current_attn, saved_original_selfattn_forward
          
         if enabled:
+            if saved_original_selfattn_forward is not None:  # Check if we successfully restore the attention module
+                attn_module = self.get_attention_module(current_attn)  # Get the attention module
+                attn_module.forward = saved_original_selfattn_forward  # Restore the original forward method
+                current_attn = saved_original_selfattn_forward = None
+            
             sag_enabled = True
             sag_mask_threshold = mask_threshold
             sag_blur_sigma = blur_sigma
@@ -284,6 +291,7 @@ class Script(scripts.Script):
             self.custom_resolution = custom_resolution
            
             if attn != "dynamic":
+                current_attn = attn
                 org_attn_module = self.get_attention_module(attn)
                 global saved_original_selfattn_forward
                 saved_original_selfattn_forward = org_attn_module.forward
@@ -316,7 +324,7 @@ class Script(scripts.Script):
         if not sag_enabled:
             return
 
-        global current_xin, current_batch_size, current_max_sigma, current_sag_block_index, current_unet_kwargs, sag_attn_target, current_sigma
+        global current_xin, current_batch_size, current_max_sigma, current_sag_block_index, current_unet_kwargs, sag_attn_target, current_sigma, current_attn
 
         current_batch_size = params.text_uncond.shape[0]
         current_xin = params.x[-current_batch_size:]
@@ -338,12 +346,14 @@ class Script(scripts.Script):
         global saved_original_selfattn_forward
         if sag_attn_target == "dynamic":
             if current_sag_block_index == -1:
+                current_attn = "middle"
                 org_attn_module = get_attention_module_for_block(shared.sd_model.model.diffusion_model.middle_block, '1')
                 saved_original_selfattn_forward = org_attn_module.forward
                 org_attn_module.forward = xattn_forward_log.__get__(org_attn_module, org_attn_module.__class__)
                 current_sag_block_index = 0
             elif torch.any(current_unet_kwargs['sigma'] < current_max_sigma * 0.15):
                 if current_sag_block_index == 1:
+                    current_attn = "block8"
                     attn_module = get_attention_module_for_block(shared.sd_model.model.diffusion_model.output_blocks[5], '0')
                     attn_module.forward = saved_original_selfattn_forward
                     # Fallback logic for block8
@@ -366,6 +376,7 @@ class Script(scripts.Script):
             # Handle the absence of '1' for the output_blocks[5] module 
             elif torch.any(current_unet_kwargs['sigma'] < current_max_sigma * 0.4):
                 if current_sag_block_index == 0:
+                    current_attn = "block5"
                     attn_module = get_attention_module_for_block(shared.sd_model.model.diffusion_model.middle_block, '1')
                     attn_module.forward = saved_original_selfattn_forward
                     # Fallback logic for block5
@@ -494,7 +505,9 @@ class Script(scripts.Script):
         if enabled: # Check if SAG was enabled
             attn_module = self.get_attention_module(attn)  # Get the attention module
             if attn_module is not None:  # Check if we successfully got the attention module
+                global current_attn, saved_original_selfattn_forward
                 attn_module.forward = saved_original_selfattn_forward  # Restore the original forward method
+                current_attn = saved_original_selfattn_forward = None
         return
 
     def get_attention_module(self, attn):
