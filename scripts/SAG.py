@@ -34,6 +34,7 @@ def adaptive_gaussian_blur_2d(img, sigma, kernel_size=None):
     if kernel_size is None:
         kernel_size = max(5, int(sigma * 4 + 1))
         kernel_size = kernel_size + 1 if kernel_size % 2 == 0 else kernel_size
+        kernel_size = kernel_size ** 2
 
     ksize_half = (kernel_size - 1) * 0.5
     x = torch.linspace(-ksize_half, ksize_half, steps=kernel_size)
