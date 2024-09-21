@@ -449,6 +449,7 @@ class Script(scripts.Script):
 
         # Adaptive blur sigma and Gaussian blur
         adaptive_sigma = sag_blur_sigma * scale_factor
+        attn_mask = adaptive_gaussian_blur_2d(attn_mask, sigma=adaptive_sigma)
         degraded_latents = adaptive_gaussian_blur_2d(original_latents, sigma=adaptive_sigma) * attn_mask + original_latents * (1 - attn_mask)
 
         renoised_degraded_latent = degraded_latents - (uncond_output - current_xin)
