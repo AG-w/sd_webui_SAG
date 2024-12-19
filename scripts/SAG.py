@@ -30,7 +30,7 @@ def default(val, d):
         return val
     return d() if isfunction(d) else d
 
-def adaptive_gaussian_blur_2d(img, sigma, kernel_size=9):
+def adaptive_gaussian_blur_2d(img, sigma, kernel_size=3):
     #if kernel_size is None:
     #    kernel_size = max(5, int(sigma * 4 + 1))
     #    kernel_size = kernel_size + 1 if kernel_size % 2 == 0 else kernel_size
