@@ -30,11 +30,11 @@ def default(val, d):
         return val
     return d() if isfunction(d) else d
 
-def adaptive_gaussian_blur_2d(img, sigma, kernel_size=None):
-    if kernel_size is None:
-        kernel_size = max(5, int(sigma * 4 + 1))
-        kernel_size = kernel_size + 1 if kernel_size % 2 == 0 else kernel_size
-        kernel_size = min(81, kernel_size ** 2)
+def adaptive_gaussian_blur_2d(img, sigma, kernel_size=9):
+    #if kernel_size is None:
+    #    kernel_size = max(5, int(sigma * 4 + 1))
+    #    kernel_size = kernel_size + 1 if kernel_size % 2 == 0 else kernel_size
+    #    kernel_size = min(81, kernel_size ** 2)
 
     ksize_half = (kernel_size - 1) * 0.5
     x = torch.linspace(-ksize_half, ksize_half, steps=kernel_size)
