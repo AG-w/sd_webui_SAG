@@ -186,6 +186,7 @@ def xattn_forward_log(self, x, context=None, mask=None, additional_tokens=None, 
 current_degraded_pred = None # Initialize as None to indicate it hasn't been set yet
 current_degraded_pred_compensation = None
 current_attn = None
+org_attn_module = None
 saved_original_selfattn_forward = None
 
 def get_attention_module_for_block(block, layer_name):
@@ -335,6 +336,7 @@ class Script(scripts.Script):
         if params.sampling_step == 0:
             current_max_sigma = current_sigma[-current_batch_size:][0]
             current_sag_block_index = -1
+            org_attn_module = None
 
         current_unet_kwargs = {
             "sigma": current_sigma[-current_batch_size:],
@@ -342,7 +344,7 @@ class Script(scripts.Script):
             "text_uncond": current_uncond_emb,
         }
 
-        #6.25 (0.15) and 2.5 (0.4) are decided by testing, there might be better scale number
+        #divided by 6.25 (0.15) and 2.5 (0.4) are decided by testing, there might be better scale number
         global saved_original_selfattn_forward
         if sag_attn_target == "dynamic":
             if current_sag_block_index == -1:
