@@ -325,7 +325,7 @@ class Script(scripts.Script):
         if not sag_enabled:
             return
 
-        global current_xin, current_batch_size, current_max_sigma, current_sag_block_index, current_unet_kwargs, sag_attn_target, current_sigma, current_attn
+        global current_xin, current_batch_size, current_max_sigma, current_sag_block_index, current_unet_kwargs, sag_attn_target, current_sigma, current_attn, org_attn_module
 
         current_batch_size = params.text_uncond.shape[0]
         current_xin = params.x[-current_batch_size:]
