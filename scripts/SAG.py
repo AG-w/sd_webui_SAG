@@ -255,7 +255,7 @@ class Script(scripts.Script):
                 scale = gr.Slider(label='Guidance Scale', minimum=-2.0, maximum=10.0, step=0.01, value=0.75)
                 mask_threshold = gr.Slider(label='Mask Threshold', minimum=0.0, maximum=2.0, step=0.01, value=1.0)
                 blur_sigma = gr.Slider(label='Gaussian Blur Sigma', minimum=0.0, maximum=10.0, step=0.01, value=1.0)
-                custom_resolution = gr.Slider(label='Base Reference Resolution', minimum=64, maximum=2048, step=8, value=512, info="Default base resolution for models: SD 1.5= 512, SD 2.1= 768, SDXL= 1024")
+                custom_resolution = gr.Slider(label='Base Reference Resolution', minimum=0, maximum=2048, step=8, value=512, info="Default base resolution for models: SD 1.5= 512, SD 2.1= 768, SDXL= 1024")
             enabled.change(fn=None, inputs=[enabled], show_progress=False)
          
         self.infotext_fields = (
@@ -435,7 +435,7 @@ class Script(scripts.Script):
         reference_resolution = self.custom_resolution
 
         # Calculate scale factor and adaptive mask threshold
-        scale_factor = math.sqrt((latent_h * latent_w) / (reference_resolution / 8) ** 2)
+        scale_factor = 1 if reference_resolution == 0 else math.sqrt((latent_h * latent_w) / (reference_resolution / 8) ** 2)
         adaptive_threshold = sag_mask_threshold * scale_factor
        
         # Calculate attention mask and ensure correct dimensions
