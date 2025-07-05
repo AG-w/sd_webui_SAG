@@ -259,11 +259,11 @@ class Script(scripts.Script):
             enabled.change(fn=None, inputs=[enabled], show_progress=False)
          
         self.infotext_fields = (
-            (enabled, lambda d: gr.Checkbox.update(value="SAG Guidance Enabled" in d)),
+            (enabled, lambda d: gr.Checkbox.update(value=d.get("SAG Guidance Enabled","True").lower() == "true")),
             (scale, "SAG Guidance Scale"),
             (mask_threshold, "SAG Mask Threshold"),
             (blur_sigma, "SAG Blur Sigma"),
-            (method, lambda d: gr.Checkbox.update(value="SAG bilinear interpolation" in d)),
+            (method, lambda d: gr.Checkbox.update(value=d.get("SAG bilinear interpolation","True").lower() == "true")),
             (attn, "SAG Attention Target"),
             (custom_resolution, "SAG Custom Resolution"))
         return [enabled, scale, mask_threshold, blur_sigma, method, attn, custom_resolution]
