@@ -9,4 +9,5 @@ For SDXL model, try to tune down everything if you are getting blurry/overfried/
 
 Bilinear interpolation: Attention mask is interpolated using bilinear method, resulting sharper image    
 Attention target: Choose the block Attention mask would apply to, `dynamic` means depending on noise sigma value    
-Base resolution: Change attention resolution scaling, set it to 0 to ignore this setting
+Base resolution: Change attention resolution scaling, set it to 0 to ignore this setting    
+Smooth Vectors: inspired by [Smooth Energy Guidance](https://github.com/logtd/ComfyUI-SEGAttention), we smoothed QKV vectors first to make latents cleaner, set it to 0 to disable it
