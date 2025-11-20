@@ -148,6 +148,11 @@ def xattn_forward_log(self, x, context=None, mask=None, additional_tokens=None, 
     k = self.to_k(context)
     v = self.to_v(context)
 
+    if current_qh is not None and sag_vector_blur_sigma > 0:
+        q = rearrange(q, 'b (h w) d -> b d w h', h=current_qh)
+        q = adaptive_gaussian_blur_2d(q, sag_vector_blur_sigma, 9) * sag_vector_blur_scale + q * (1 - sag_vector_blur_scale)
+        q = rearrange(q, 'b d w h -> b (h w) d')
+    
     q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
 
     if _ATTN_PRECISION == "fp32":
@@ -186,6 +191,7 @@ def xattn_forward_log(self, x, context=None, mask=None, additional_tokens=None, 
 current_degraded_pred = None # Initialize as None to indicate it hasn't been set yet
 current_degraded_pred_compensation = None
 current_attn = None
+current_qh = None
 org_attn_module = None
 saved_original_selfattn_forward = None
 
@@ -255,7 +261,9 @@ class Script(scripts.Script):
                 scale = gr.Slider(label='Guidance Scale', minimum=-2.0, maximum=10.0, step=0.01, value=0.75)
                 mask_threshold = gr.Slider(label='Mask Threshold', minimum=0.0, maximum=2.0, step=0.01, value=1.0)
                 blur_sigma = gr.Slider(label='Gaussian Blur Sigma', minimum=0.0, maximum=10.0, step=0.01, value=1.0)
-                custom_resolution = gr.Slider(label='Base Reference Resolution', minimum=0, maximum=2048, step=8, value=512, info="Default base resolution for models: SD 1.5= 512, SD 2.1= 768, SDXL= 1024")
+                custom_resolution = gr.Slider(label='Base Reference Resolution', minimum=0, maximum=2048, step=8, value=512, info="Default base resolution for models: SD 1.5= 512, SD 2.1= 768, SDXL= 1024, set 0 to disable")
+                vector_blur_sigma = gr.Slider(label='Smooth Vectors Sigma', minimum=0.0, maximum=10, step=0.01, value=0.5, info="manipulate vectors to create cleaner latents, set 0 to disable")
+                vector_blur_scale = gr.Slider(label='Smooth Vectors Scale', minimum=0.0, maximum=1, step=0.01, value=0.5)
             enabled.change(fn=None, inputs=[enabled], show_progress=False)
          
         self.infotext_fields = (
@@ -265,16 +273,18 @@ class Script(scripts.Script):
             (blur_sigma, "SAG Blur Sigma"),
             (method, lambda d: gr.Checkbox.update(value=d.get("SAG bilinear interpolation").lower() == "true")),
             (attn, "SAG Attention Target"),
-            (custom_resolution, "SAG Custom Resolution"))
-        return [enabled, scale, mask_threshold, blur_sigma, method, attn, custom_resolution]
+            (custom_resolution, "SAG Custom Resolution"),
+            (vector_blur_sigma, "SAG Smooth Vectors Sigma"),
+            (vector_blur_scale, "SAG Smooth Vectors Scale"))
+        return [enabled, scale, mask_threshold, blur_sigma, method, attn, custom_resolution, vector_blur_sigma, vector_blur_scale]
     
     def reset_attention_target(self):
         global sag_attn_target
         sag_attn_target = self.original_attn_target
     
     def process(self, p: StableDiffusionProcessing, *args):
-        enabled, scale, mask_threshold, blur_sigma, method, attn, custom_resolution = args
-        global sag_enabled, sag_mask_threshold, sag_blur_sigma, sag_method_bilinear, sag_attn_target, current_sag_guidance_scale, current_attn, saved_original_selfattn_forward
+        enabled, scale, mask_threshold, blur_sigma, method, attn, custom_resolution, vector_blur_sigma, vector_blur_scale = args
+        global sag_enabled, sag_mask_threshold, sag_blur_sigma, sag_method_bilinear, sag_attn_target, sag_vector_blur_sigma, sag_vector_blur_scale, current_sag_guidance_scale, current_attn, saved_original_selfattn_forward
          
         if enabled:
             if saved_original_selfattn_forward is not None:  # Check if we successfully restore the attention module
@@ -288,6 +298,8 @@ class Script(scripts.Script):
             sag_method_bilinear = method
             self.original_attn_target = attn  # Save the original attention target
             sag_attn_target = attn
+            sag_vector_blur_sigma = vector_blur_sigma
+            sag_vector_blur_scale = vector_blur_scale
             current_sag_guidance_scale = scale
             self.custom_resolution = custom_resolution
            
@@ -306,7 +318,9 @@ class Script(scripts.Script):
                 "SAG bilinear interpolation": method,
                 "SAG Attention Target": attn,
                 "SAG Base Model": base_model,
-                "SAG Custom Resolution": custom_resolution
+                "SAG Custom Resolution": custom_resolution,
+                "SAG Smooth Vectors Sigma": vector_blur_sigma,
+                "SAG Smooth Vectors Scale": vector_blur_scale
             })
         else:
             sag_enabled = False
@@ -333,6 +347,10 @@ class Script(scripts.Script):
         current_sigma = params.sigma
         current_image_cond_in = params.image_cond
 
+        is_sdxl = shared.sd_model.is_sdxl if hasattr(shared.sd_model, 'is_sdxl') else False
+        _, _, qh, _ = current_xin.shape
+        current_qh = math.ceil(qh / 4) if is_sdxl else math.ceil(qh / 8)
+        
         if params.sampling_step == 0:
             current_max_sigma = current_sigma[-current_batch_size:][0]
             current_sag_block_index = -1
@@ -504,7 +522,7 @@ class Script(scripts.Script):
         params.output_altered = True
 
     def postprocess_batch(self, p, processed, *args):
-        enabled, scale, sag_mask_threshold, blur_sigma, method, attn, custom_resolution = args
+        enabled, scale, sag_mask_threshold, blur_sigma, method, attn, custom_resolution, vector_blur_sigma, vector_blur_scale  = args
         if enabled: # Check if SAG was enabled
             attn_module = self.get_attention_module(attn)  # Get the attention module
             if attn_module is not None:  # Check if we successfully got the attention module
