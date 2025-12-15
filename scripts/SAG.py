@@ -30,6 +30,37 @@ def default(val, d):
         return val
     return d() if isfunction(d) else d
 
+def median_blur_2d(x, kernel_size=3, stride=1): #, padding=0, same=False):
+    # using existing pytorch functions and tensor ops so that we get autograd, 
+    # would likely be more efficient to implement from scratch at C/Cuda level
+    k = _pair(kernel_size)
+    stride = _pair(stride)
+    #padding = _quadruple(padding)  # convert to l, r, t, b	
+    def _padding(p):
+        if True:
+            ih, iw = p.size()[2:]
+            if ih % stride[0] == 0:
+                ph = max(k[0] - stride[0], 0)
+            else:
+                ph = max(k[0] - (ih % stride[0]), 0)
+            if iw % stride[1] == 0:
+                pw = max(k[1] - stride[1], 0)
+            else:
+                pw = max(k[1] - (iw % stride[1]), 0)
+            pl = pw // 2
+            pr = pw - pl
+            pt = ph // 2
+            pb = ph - pt
+            padding = (pl, pr, pt, pb)
+        else:
+            padding = padding
+        return padding
+
+    x = F.pad(x, _padding(x), mode='reflect')
+    x = x.unfold(2, k[0], stride[0]).unfold(3, k[1], stride[1])
+    x = x.contiguous().view(x.size()[:4] + (-1,)).median(dim=-1)[0]
+    return x
+
 def adaptive_gaussian_blur_2d(img, sigma, kernel_size=9):
     #if kernel_size is None:
     #    kernel_size = max(5, int(sigma * 4 + 1))
@@ -147,31 +178,50 @@ def xattn_forward_log(self, x, context=None, mask=None, additional_tokens=None, 
     context = default(context, x)
     k = self.to_k(context)
     v = self.to_v(context)
+    q2 = self.to_q(x.new_zeros(x.shape))
+    k2 = self.to_k(context.new_zeros(context.shape))
 
+    q1 = q.detach().clone()
     if current_qh is not None and sag_vector_blur_sigma > 0:
-        q = rearrange(q, 'b (h w) d -> b d w h', h=current_qh)
-        q = adaptive_gaussian_blur_2d(q, sag_vector_blur_sigma, 9) * sag_vector_blur_scale + q * (1 - sag_vector_blur_scale)
-        q = rearrange(q, 'b d w h -> b (h w) d')
-    
-    q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
+        q1 = rearrange(q1, 'b (h w) d -> b d w h', h=current_qh)
+        q1 = median_blur_2d(q1, 1) * 0.1 + adaptive_gaussian_blur_2d(q1, sag_vector_blur_sigma, 9) * 0.9
+        q1 = rearrange(q1, 'b d w h -> b (h w) d')
+    qo = q
+    ko = k
+    vo = v
+    q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (qo, ko, vo))
+    q2, k2, v2 = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q2, k2, vo))
+    q1, k1, v1 = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q1, ko, vo))
 
     if _ATTN_PRECISION == "fp32":
         with torch.autocast(enabled=False, device_type='cuda'):
             q, k = q.float(), k.float()
+            q1, k1 = q1.float(), k1.float()
+            q2, k2 = q2.float(), k2.float()
             sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
+            sim1 = einsum('b i d, b j d -> b i j', q1, k1) * self.scale
+            sim2 = einsum('b i d, b j d -> b i j', q2, k2) * self.scale
     else:
         sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
+        sim1 = einsum('b i d, b j d -> b i j', q1, k1) * self.scale
+        sim2 = einsum('b i d, b j d -> b i j', q2, k2) * self.scale
 
-    del q, k
+    del qo, ko, q, k, q1, k1, q2, k2, vo
 
     if exists(mask):
         mask = rearrange(mask, 'b ... -> b (...)')
         max_neg_value = -torch.finfo(sim.dtype).max
+        max_neg_value1 = -torch.finfo(sim1.dtype).max
+        max_neg_value2 = -torch.finfo(sim2.dtype).max
         mask = repeat(mask, 'b j -> (b h) () j', h=h)
         sim.masked_fill_(~mask, max_neg_value)
-
+        sim1.masked_fill_(~mask, max_neg_value1)
+        sim2.masked_fill_(~mask, max_neg_value2)
+    
     sim = sim.softmax(dim=-1)
-
+    sim1 = sim1.softmax(dim=-1)
+    sim2 = sim2.softmax(dim=-1)
+    
     self.attn_probs = sim
     global current_selfattn_map
     current_selfattn_map = sim
@@ -179,6 +229,15 @@ def xattn_forward_log(self, x, context=None, mask=None, additional_tokens=None, 
     sim = sim.to(dtype=v.dtype)
     out = einsum('b i j, b j d -> b i d', sim, v)
     out = rearrange(out, '(b h) n d -> b n (h d)', h=h)
+    sim1 = sim1.to(dtype=v1.dtype)
+    out1 = einsum('b i j, b j d -> b i d', sim1, v1)
+    out1 = rearrange(out1, '(b h) n d -> b n (h d)', h=h)
+    sim2 = sim2.to(dtype=v2.dtype)
+    out2 = einsum('b i j, b j d -> b i d', sim2, v2)
+    out2 = rearrange(out2, '(b h) n d -> b n (h d)', h=h)
+    
+    out = out + (out - out2) * sag_vector_perturbed_scale
+    out = out * (1 - sag_vector_blur_scale) + out1 * sag_vector_blur_scale
     out = self.to_out(out)
 
     if additional_tokens is not None:
@@ -262,8 +321,10 @@ class Script(scripts.Script):
                 mask_threshold = gr.Slider(label='Mask Threshold', minimum=0.0, maximum=2.0, step=0.01, value=1.0)
                 blur_sigma = gr.Slider(label='Gaussian Blur Sigma', minimum=0.0, maximum=10.0, step=0.01, value=1.0)
                 custom_resolution = gr.Slider(label='Base Reference Resolution', minimum=0, maximum=2048, step=8, value=512, info="Default base resolution for models: SD 1.5= 512, SD 2.1= 768, SDXL= 1024, set 0 to disable")
+            with gr.Accordion("Extra Options", open=False):
                 vector_blur_sigma = gr.Slider(label='Smooth Vectors Sigma', minimum=0.0, maximum=10, step=0.01, value=0.5, info="manipulate vectors to create cleaner latents, set 0 to disable")
                 vector_blur_scale = gr.Slider(label='Smooth Vectors Scale', minimum=0.0, maximum=1, step=0.01, value=0.5)
+                vector_perturbed_scale = gr.Slider(label='Perturbed Vectors Scale', minimum=0.0, maximum=1, step=0.01, value=0.1)
             enabled.change(fn=None, inputs=[enabled], show_progress=False)
          
         self.infotext_fields = (
@@ -275,16 +336,17 @@ class Script(scripts.Script):
             (attn, "SAG Attention Target"),
             (custom_resolution, "SAG Custom Resolution"),
             (vector_blur_sigma, "SAG Smooth Vectors Sigma"),
-            (vector_blur_scale, "SAG Smooth Vectors Scale"))
-        return [enabled, scale, mask_threshold, blur_sigma, method, attn, custom_resolution, vector_blur_sigma, vector_blur_scale]
+            (vector_blur_scale, "SAG Smooth Vectors Scale"),
+            (vector_perturbed_scale, "SAG Perturbed Vectors Scale"))
+        return [enabled, scale, mask_threshold, blur_sigma, method, attn, custom_resolution, vector_blur_sigma, vector_blur_scale, vector_perturbed_scale]
     
     def reset_attention_target(self):
         global sag_attn_target
         sag_attn_target = self.original_attn_target
     
     def process(self, p: StableDiffusionProcessing, *args):
-        enabled, scale, mask_threshold, blur_sigma, method, attn, custom_resolution, vector_blur_sigma, vector_blur_scale = args
-        global sag_enabled, sag_mask_threshold, sag_blur_sigma, sag_method_bilinear, sag_attn_target, sag_vector_blur_sigma, sag_vector_blur_scale, current_sag_guidance_scale, current_attn, saved_original_selfattn_forward
+        enabled, scale, mask_threshold, blur_sigma, method, attn, custom_resolution, vector_blur_sigma, vector_blur_scale, vector_perturbed_scale = args
+        global sag_enabled, sag_mask_threshold, sag_blur_sigma, sag_method_bilinear, sag_attn_target, sag_vector_blur_sigma, sag_vector_blur_scale, sag_vector_perturbed_scale, current_sag_guidance_scale, current_attn, saved_original_selfattn_forward
          
         if enabled:
             if saved_original_selfattn_forward is not None:  # Check if we successfully restore the attention module
@@ -300,6 +362,7 @@ class Script(scripts.Script):
             sag_attn_target = attn
             sag_vector_blur_sigma = vector_blur_sigma
             sag_vector_blur_scale = vector_blur_scale
+            sag_vector_perturbed_scale = vector_perturbed_scale
             current_sag_guidance_scale = scale
             self.custom_resolution = custom_resolution
            
@@ -320,7 +383,8 @@ class Script(scripts.Script):
                 "SAG Base Model": base_model,
                 "SAG Custom Resolution": custom_resolution,
                 "SAG Smooth Vectors Sigma": vector_blur_sigma,
-                "SAG Smooth Vectors Scale": vector_blur_scale
+                "SAG Smooth Vectors Scale": vector_blur_scale,
+                "SAG Perturbed Vectors Scale": vector_perturbed_scale
             })
         else:
             sag_enabled = False
@@ -522,7 +586,7 @@ class Script(scripts.Script):
         params.output_altered = True
 
     def postprocess_batch(self, p, processed, *args):
-        enabled, scale, sag_mask_threshold, blur_sigma, method, attn, custom_resolution, vector_blur_sigma, vector_blur_scale  = args
+        enabled, scale, sag_mask_threshold, blur_sigma, method, attn, custom_resolution, vector_blur_sigma, vector_blur_scale, vector_perturbed_scale  = args
         if enabled: # Check if SAG was enabled
             attn_module = self.get_attention_module(attn)  # Get the attention module
             if attn_module is not None:  # Check if we successfully got the attention module
