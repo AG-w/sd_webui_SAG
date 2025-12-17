@@ -181,7 +181,7 @@ def xattn_forward_log(self, x, context=None, mask=None, additional_tokens=None, 
     q2 = self.to_q(x.new_zeros(x.shape))
     k2 = self.to_k(context.new_zeros(context.shape))
 
-    q1 = q.detach().clone()
+    q1 = q
     if current_qh is not None and sag_vector_blur_sigma > 0:
         q1 = rearrange(q1, 'b (h w) d -> b d w h', h=current_qh)
         q1 = median_blur_2d(q1, 1) * 0.1 + adaptive_gaussian_blur_2d(q1, sag_vector_blur_sigma, 9) * 0.9
