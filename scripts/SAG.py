@@ -192,7 +192,8 @@ def xattn_forward_log(self, x, context=None, mask=None, additional_tokens=None, 
     q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (qo, ko, vo))
     q2, k2, v2 = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q2, k2, vo))
     q1, k1, v1 = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q1, ko, vo))
-
+    del qo, ko, vo
+    
     if _ATTN_PRECISION == "fp32":
         with torch.autocast(enabled=False, device_type='cuda'):
             q, k = q.float(), k.float()
@@ -205,8 +206,7 @@ def xattn_forward_log(self, x, context=None, mask=None, additional_tokens=None, 
         sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
         sim1 = einsum('b i d, b j d -> b i j', q1, k1) * self.scale
         sim2 = einsum('b i d, b j d -> b i j', q2, k2) * self.scale
-
-    del qo, ko, q, k, q1, k1, q2, k2, vo
+    del q, k, q1, k1, q2, k2
 
     if exists(mask):
         mask = rearrange(mask, 'b ... -> b (...)')
