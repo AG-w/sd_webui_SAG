@@ -600,14 +600,20 @@ class Script(scripts.Script):
             if attn == "middle":
                 return shared.sd_model.model.diffusion_model.middle_block._modules['1'].transformer_blocks._modules['0'].attn1
             elif attn == "block5":
-                return shared.sd_model.model.diffusion_model.output_blocks[5]._modules['1'].transformer_blocks._modules['0'].attn1
+                if shared.sd_model.is_sdxl:
+                    if hasattr(shared.sd_model.model.diffusion_model.output_blocks[2], 'resnets'):  
+                        return shared.sd_model.model.diffusion_model.output_blocks[2].resnets[1].spatial_transformer.transformer_blocks._modules['0'].attn1
+                    else:
+                        return shared.sd_model.model.diffusion_model.output_blocks[2].transformer_blocks._modules['0'].attn1
+                else:
+                    return shared.sd_model.model.diffusion_model.output_blocks[5]._modules['1'].transformer_blocks._modules['0'].attn1
             elif attn == "block8":
                 if shared.sd_model.is_sdxl:
-                    if hasattr(shared.sd_model.model.diffusion_model.output_blocks[8], 'resnets'):  
-                        return shared.sd_model.model.diffusion_model.output_blocks[8].resnets[1].spatial_transformer.transformer_blocks._modules['0'].attn1
+                    if hasattr(shared.sd_model.model.diffusion_model.output_blocks[5], 'resnets'):  
+                        return shared.sd_model.model.diffusion_model.output_blocks[5].resnets[1].spatial_transformer.transformer_blocks._modules['0'].attn1
                     else:
                         # If spatial_transformer not present, use standard SDXL attention block location
-                        return shared.sd_model.model.diffusion_model.output_blocks[8].transformer_blocks._modules['0'].attn1
+                        return shared.sd_model.model.diffusion_model.output_blocks[5].transformer_blocks._modules['0'].attn1
                 else:
                     # Non-SDXL logic
                     return get_attention_module_for_block(shared.sd_model.model.diffusion_model.output_blocks[8], '0')
@@ -615,13 +621,19 @@ class Script(scripts.Script):
                 if current_sag_block_index == 0:
                     return shared.sd_model.model.diffusion_model.middle_block._modules['1'].transformer_blocks._modules['0'].attn1
                 elif current_sag_block_index == 1:
-                    return shared.sd_model.model.diffusion_model.output_blocks[5]._modules['1'].transformer_blocks._modules['0'].attn1
+                    if shared.sd_model.is_sdxl:
+                        if hasattr(shared.sd_model.model.diffusion_model.output_blocks[2], 'resnets'):  
+                            return shared.sd_model.model.diffusion_model.output_blocks[2].resnets[1].spatial_transformer.transformer_blocks._modules['0'].attn1
+                        else:
+                            return shared.sd_model.model.diffusion_model.output_blocks[2].transformer_blocks._modules['0'].attn1
+                    else:
+                        return shared.sd_model.model.diffusion_model.output_blocks[5]._modules['1'].transformer_blocks._modules['0'].attn1
                 elif current_sag_block_index == 2:
                     if shared.sd_model.is_sdxl:
-                        if hasattr(shared.sd_model.model.diffusion_model.output_blocks[8], 'resnets'):  
-                            return shared.sd_model.model.diffusion_model.output_blocks[8].resnets[1].spatial_transformer.transformer_blocks._modules['0'].attn1
+                        if hasattr(shared.sd_model.model.diffusion_model.output_blocks[5], 'resnets'):  
+                            return shared.sd_model.model.diffusion_model.output_blocks[5].resnets[1].spatial_transformer.transformer_blocks._modules['0'].attn1
                         else:
-                            return shared.sd_model.model.diffusion_model.output_blocks[8].transformer_blocks._modules['0'].attn1
+                            return shared.sd_model.model.diffusion_model.output_blocks[5].transformer_blocks._modules['0'].attn1
                     else:
                         return get_attention_module_for_block(shared.sd_model.model.diffusion_model.output_blocks[8], '0')
         except (KeyError, AttributeError):
