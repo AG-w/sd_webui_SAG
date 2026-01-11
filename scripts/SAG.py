@@ -447,7 +447,9 @@ class Script(scripts.Script):
                         # Handle potential variations in SDXL architecture
                         if shared.sd_model.is_sdxl:
                             if hasattr(org_attn_module, 'resnets'):  
-                                org_attn_module = org_attn_module.resnets[1].spatial_transformer.transformer_blocks._modules['0'].attn1
+                                org_attn_module = shared.sd_model.model.diffusion_model.output_blocks[5].resnets[1].spatial_transformer.transformer_blocks._modules['0'].attn1
+                            else:
+                                org_attn_module = shared.sd_model.model.diffusion_model.output_blocks[5]._modules['1'].transformer_blocks._modules['0'].attn1
                     except AttributeError:
                         logger.warning("Attention layer not found in block8. Switching attention target to 'middle' block.")
                         sag_attn_target = "middle"  # Change to middle block
@@ -465,7 +467,13 @@ class Script(scripts.Script):
                     attn_module.forward = saved_original_selfattn_forward
                     # Fallback logic for block5
                     try:
-                        org_attn_module = shared.sd_model.model.diffusion_model.output_blocks[5]._modules['1'].transformer_blocks._modules['0'].attn1
+                        if shared.sd_model.is_sd1:
+                            org_attn_module = shared.sd_model.model.diffusion_model.output_blocks[5]._modules['1'].transformer_blocks._modules['0'].attn1
+                        if shared.sd_model.is_sdxl:
+                            if hasattr(org_attn_module, 'resnets'):  
+                                org_attn_module = shared.sd_model.model.diffusion_model.output_blocks[2].resnets[1].spatial_transformer.transformer_blocks._modules['0'].attn1
+                            else:
+                                org_attn_module = shared.sd_model.model.diffusion_model.output_blocks[2]._modules['1'].transformer_blocks._modules['0'].attn1
                     except AttributeError:
                         logger.warning("Attention layer not found in block5. Switching attention target to 'middle' block.")
                         sag_attn_target = "middle"  # Change to middle block
