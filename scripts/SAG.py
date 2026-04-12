@@ -237,7 +237,7 @@ def xattn_forward_log(self, x, context=None, mask=None, additional_tokens=None, 
     out2 = rearrange(out2, '(b h) n d -> b n (h d)', h=h)
     
     out = out + (out - out2) * sag_vector_perturbed_scale
-    multi_o, multi_s = 1.0 if sag_vector_blur_multi > 0 else sag_vector_blur_multi, 1.0 if sag_vector_blur_multi < 0 else sag_vector_blur_multi
+    multi_o, multi_s = 1.0 if sag_vector_blur_multi >= 0 else (sag_vector_blur_multi * -1), 1.0 if sag_vector_blur_multi < 0 else sag_vector_blur_multi
     out = out * (1 - sag_vector_blur_scale) * multi_o + out1 * sag_vector_blur_scale * multi_s 
     out = self.to_out(out)
 
