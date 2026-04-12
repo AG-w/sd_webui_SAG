@@ -237,7 +237,8 @@ def xattn_forward_log(self, x, context=None, mask=None, additional_tokens=None, 
     out2 = rearrange(out2, '(b h) n d -> b n (h d)', h=h)
     
     out = out + (out - out2) * sag_vector_perturbed_scale
-    out = out * (1 - sag_vector_blur_scale) + out1 * sag_vector_blur_scale
+    multi_o, multi_s = 1.0 if sag_vector_blur_multi > 0 else sag_vector_blur_multi, 1.0 if sag_vector_blur_multi < 0 else sag_vector_blur_multi
+    out = out * (1 - sag_vector_blur_scale) * multi_o + out1 * sag_vector_blur_scale * multi_s 
     out = self.to_out(out)
 
     if additional_tokens is not None:
@@ -323,7 +324,8 @@ class Script(scripts.Script):
                 custom_resolution = gr.Slider(label='Base Reference Resolution', minimum=0, maximum=2048, step=8, value=512, info="Default base resolution for models: SD 1.5= 512, SD 2.1= 768, SDXL= 1024, set 0 to disable")
             with gr.Accordion("Extra Options", open=False):
                 vector_blur_sigma = gr.Slider(label='Smooth Vectors Sigma', minimum=0.0, maximum=10, step=0.01, value=0.5, info="manipulate vectors to create cleaner latents, set 0 to disable")
-                vector_blur_scale = gr.Slider(label='Smooth Vectors Scale', minimum=0.0, maximum=1, step=0.01, value=0.5)
+                vector_blur_scale = gr.Slider(label='Smooth Vectors Scale', minimum=0.0, maximum=1, step=0.01, value=0.5, info="a ratio between this vectos and original vectors")
+                vector_blur_multi = gr.Slider(label='Smooth Vectors Multiplier', minimum=-5.0, maximum=5, step=0.01, value=1.0, info="multiply this vectors to boost details, might overfry image")
                 vector_perturbed_scale = gr.Slider(label='Perturbed Vectors Scale', minimum=0.0, maximum=1, step=0.01, value=0.1)
             enabled.change(fn=None, inputs=[enabled], show_progress=False)
          
@@ -337,16 +339,17 @@ class Script(scripts.Script):
             (custom_resolution, "SAG Custom Resolution"),
             (vector_blur_sigma, "SAG Smooth Vectors Sigma"),
             (vector_blur_scale, "SAG Smooth Vectors Scale"),
+            (vector_blur_multi, "SAG Smooth Vectors Multiplier"),
             (vector_perturbed_scale, "SAG Perturbed Vectors Scale"))
-        return [enabled, scale, mask_threshold, blur_sigma, method, attn, custom_resolution, vector_blur_sigma, vector_blur_scale, vector_perturbed_scale]
+        return [enabled, scale, mask_threshold, blur_sigma, method, attn, custom_resolution, vector_blur_sigma, vector_blur_scale, vector_blur_multi, vector_perturbed_scale]
     
     def reset_attention_target(self):
         global sag_attn_target
         sag_attn_target = self.original_attn_target
     
     def process(self, p: StableDiffusionProcessing, *args):
-        enabled, scale, mask_threshold, blur_sigma, method, attn, custom_resolution, vector_blur_sigma, vector_blur_scale, vector_perturbed_scale = args
-        global sag_enabled, sag_mask_threshold, sag_blur_sigma, sag_method_bilinear, sag_attn_target, sag_vector_blur_sigma, sag_vector_blur_scale, sag_vector_perturbed_scale, current_sag_guidance_scale, current_attn, saved_original_selfattn_forward
+        enabled, scale, mask_threshold, blur_sigma, method, attn, custom_resolution, vector_blur_sigma, vector_blur_scale, vector_blur_multi, vector_perturbed_scale = args
+        global sag_enabled, sag_mask_threshold, sag_blur_sigma, sag_method_bilinear, sag_attn_target, sag_vector_blur_sigma, sag_vector_blur_scale, sag_vector_perturbed_scale, current_sag_guidance_scale, sag_vector_blur_multi, current_attn, saved_original_selfattn_forward
          
         if enabled:
             if saved_original_selfattn_forward is not None:  # Check if we successfully restore the attention module
@@ -362,6 +365,7 @@ class Script(scripts.Script):
             sag_attn_target = attn
             sag_vector_blur_sigma = vector_blur_sigma
             sag_vector_blur_scale = vector_blur_scale
+            sag_vector_blur_multi = vector_blur_multi
             sag_vector_perturbed_scale = vector_perturbed_scale
             current_sag_guidance_scale = scale
             self.custom_resolution = custom_resolution
@@ -384,6 +388,7 @@ class Script(scripts.Script):
                 "SAG Custom Resolution": custom_resolution,
                 "SAG Smooth Vectors Sigma": vector_blur_sigma,
                 "SAG Smooth Vectors Scale": vector_blur_scale,
+                "SAG Smooth Vectors Multiplier": vector_blur_multi,
                 "SAG Perturbed Vectors Scale": vector_perturbed_scale
             })
         else:
@@ -594,7 +599,7 @@ class Script(scripts.Script):
         params.output_altered = True
 
     def postprocess_batch(self, p, processed, *args):
-        enabled, scale, sag_mask_threshold, blur_sigma, method, attn, custom_resolution, vector_blur_sigma, vector_blur_scale, vector_perturbed_scale  = args
+        enabled, scale, sag_mask_threshold, blur_sigma, method, attn, custom_resolution, vector_blur_sigma, vector_blur_scale, vector_blur_multi, vector_perturbed_scale  = args
         if enabled: # Check if SAG was enabled
             attn_module = self.get_attention_module(attn)  # Get the attention module
             if attn_module is not None:  # Check if we successfully got the attention module
