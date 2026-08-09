@@ -176,59 +176,52 @@ def xattn_forward_log(self, x, context=None, mask=None, additional_tokens=None, 
 
     q = self.to_q(x)
     context = default(context, x)
-    k = self.to_k(context)
-    v = self.to_v(context)
-    q3 = q2 = self.to_q(x.new_zeros(x.shape))
-    k3 = k2 = self.to_k(context.new_zeros(context.shape))
 
     rng = torch.Generator(device=x.device).manual_seed(current_seed)
     permutation_x = torch.randperm(x.shape[1], generator=rng, device=x.device)
     permutation_x = x[:, permutation_x]
-    permutation_context = default(context, permutation_x)
-    v3 = self.to_v(permutation_context)
+    q3 = self.to_q(permutation_x)
+    
+    k = self.to_k(context)
+    v = self.to_v(context)
 
     q1 = q
     if current_qh is not None and sag_vector_blur_sigma > 0:
         q1 = rearrange(q1, 'b (h w) d -> b d w h', h=current_qh)
         q1 = median_blur_2d(q1, 1) * 0.1 + adaptive_gaussian_blur_2d(q1, sag_vector_blur_sigma, 9) * 0.9
         q1 = rearrange(q1, 'b d w h -> b (h w) d')
+        
     qo = q
     ko = k
     vo = v
+    
     q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (qo, ko, vo))
-    q2, k2, v2 = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q2, k2, vo))
     q1, k1, v1 = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q1, ko, vo))
-    q3, k3, v3 = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q3, k3, v3))
+    q3, k3, v3 = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q3, ko, vo))
+    eye_sim = torch.eye(q.shape[1], device=q.device, dtype=q.dtype).unsqueeze(0).repeat(q.shape[0], 1, 1)
     del qo, ko, vo
     
     if _ATTN_PRECISION == "fp32":
         with torch.autocast(enabled=False, device_type='cuda'):
             q, k = q.float(), k.float()
             q1, k1 = q1.float(), k1.float()
-            q2, k2 = q2.float(), k2.float()
             q3, k3 = q3.float(), k3.float()
             sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
             sim1 = einsum('b i d, b j d -> b i j', q1, k1) * self.scale
-            sim2 = einsum('b i d, b j d -> b i j', q2, k2) * self.scale
             sim3 = einsum('b i d, b j d -> b i j', q3, k3) * self.scale
     else:
         sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
         sim1 = einsum('b i d, b j d -> b i j', q1, k1) * self.scale
-        sim2 = einsum('b i d, b j d -> b i j', q2, k2) * self.scale
         sim3 = einsum('b i d, b j d -> b i j', q3, k3) * self.scale
-    del q, k, q1, k1, q2, k2, q3, k3
+    del q, k, q1, k1, q3, k3
 
     if exists(mask):
         mask = rearrange(mask, 'b ... -> b (...)')
         max_neg_value = -torch.finfo(sim.dtype).max
-        max_neg_value1 = -torch.finfo(sim1.dtype).max
-        max_neg_value2 = -torch.finfo(sim2.dtype).max
-        max_neg_value3 = -torch.finfo(sim3.dtype).max
         mask = repeat(mask, 'b j -> (b h) () j', h=h)
         sim.masked_fill_(~mask, max_neg_value)
-        sim1.masked_fill_(~mask, max_neg_value1)
-        sim2.masked_fill_(~mask, max_neg_value2)
-        sim3.masked_fill_(~mask, max_neg_value3)
+        sim1.masked_fill_(~mask, max_neg_value)
+        sim3.masked_fill_(~mask, max_neg_value)
     
     sim = sim.softmax(dim=-1)
     sim1 = sim1.softmax(dim=-1)
@@ -245,8 +238,8 @@ def xattn_forward_log(self, x, context=None, mask=None, additional_tokens=None, 
     sim1 = sim1.to(dtype=v1.dtype)
     out1 = einsum('b i j, b j d -> b i d', sim1, v1)
     out1 = rearrange(out1, '(b h) n d -> b n (h d)', h=h)
-    sim2 = sim2.to(dtype=v2.dtype)
-    out2 = einsum('b i j, b j d -> b i d', sim2, v2)
+
+    out2 = einsum('b i j, b j d -> b i d', eye_sim, v)
     out2 = rearrange(out2, '(b h) n d -> b n (h d)', h=h)
     sim3 = sim3.to(dtype=v3.dtype)
     out3 = einsum('b i j, b j d -> b i d', sim3, v3)
@@ -254,11 +247,11 @@ def xattn_forward_log(self, x, context=None, mask=None, additional_tokens=None, 
     
     ov = (out - out2) * sag_vector_perturbed_scale if sag_vector_perturbed_scale > 0 else 0
     ot = (out - out3) * sag_token_perturbed_scale if sag_token_perturbed_scale > 0 else 0
-    out = out + ov + ot
-    
+
     if sag_vector_blur_sigma > 0:
-        multi_o, multi_s = 1.0 if sag_vector_blur_multi >= 0 else (sag_vector_blur_multi * -1), 1.0 if sag_vector_blur_multi < 0 else sag_vector_blur_multi
-        out = out * (1 - sag_vector_blur_scale) * multi_o + out1 * sag_vector_blur_scale * multi_s 
+        out = out * (1 - sag_vector_blur_scale) + out1 * sag_vector_blur_scale + (out - out1) * sag_vector_blur_multi + ov + ot
+    else:
+        out = out + ov + ot
 
     if additional_tokens is not None:
         out = out[:, n_tokens_to_mask:]
