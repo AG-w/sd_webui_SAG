@@ -565,9 +565,9 @@ class Script(scripts.Script):
         if enabled: # Check if SAG was enabled
             attn_module = self.get_attention_module(attn)  # Get the attention module
             if attn_module is not None:  # Check if we successfully got the attention module
-                global current_attn, saved_original_selfattn_forward, current_qh, current_seed
+                global current_uncond_pred, current_degraded_pred, current_degraded_pred_compensation, current_xin, current_unet_kwargs, current_attn, saved_original_selfattn_forward, current_qh, current_seed
                 attn_module.forward = saved_original_selfattn_forward  # Restore the original forward method
-                current_attn = saved_original_selfattn_forward = current_qh = current_seed = None
+                current_uncond_pred = current_degraded_pred = current_degraded_pred_compensation = current_xin = current_unet_kwargs = current_attn = saved_original_selfattn_forward = current_qh = current_seed = None
         return
 
     def get_attention_module(self, attn):
