@@ -20,7 +20,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_ATTN_PRECISION = os.environ.get("ATTN_PRECISION", "fp32")
+#_ATTN_PRECISION = os.environ.get("ATTN_PRECISION", "fp32")
 
 def exists(val):
     return val is not None
@@ -201,7 +201,7 @@ def xattn_forward_log(self, x, context=None, mask=None, additional_tokens=None, 
     eye_sim = torch.eye(q.shape[1], device=q.device, dtype=q.dtype).unsqueeze(0).repeat(q.shape[0], 1, 1)
     del qo, ko, vo
     
-    if _ATTN_PRECISION == "fp32":
+    if x.dtype == torch.float: #_ATTN_PRECISION == "fp32":
         with torch.autocast(enabled=False, device_type='cuda'):
             q, k = q.float(), k.float()
             q1, k1 = q1.float(), k1.float()
