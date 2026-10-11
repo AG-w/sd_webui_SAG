@@ -335,10 +335,14 @@ class Script(scripts.Script):
         attn_module = self.get_attention_module(current_attn)
         attn_module.forward = saved_original_selfattn_forward
         current_attn = saved_original_selfattn_forward = None
+
+    def before_process_batch(self, p: StableDiffusionProcessing, *args, **kwargs):
+        global current_seed
+        current_seed = p.seeds[0] * -1
     
     def process(self, p: StableDiffusionProcessing, *args):
         enabled, scale, mask_threshold, blur_sigma, method, attn, custom_resolution, vector_blur_sigma, vector_blur_scale, vector_blur_multi, vector_perturbed_scale, token_perturbed_scale = args
-        global sag_enabled, sag_mask_threshold, sag_blur_sigma, sag_method_bilinear, sag_attn_target, sag_vector_blur_sigma, sag_vector_blur_scale, sag_vector_perturbed_scale, sag_token_perturbed_scale, current_sag_guidance_scale, sag_vector_blur_multi, current_attn, saved_original_selfattn_forward, current_seed
+        global sag_enabled, sag_mask_threshold, sag_blur_sigma, sag_method_bilinear, sag_attn_target, sag_vector_blur_sigma, sag_vector_blur_scale, sag_vector_perturbed_scale, sag_token_perturbed_scale, current_sag_guidance_scale, sag_vector_blur_multi, current_attn, saved_original_selfattn_forward 
          
         if enabled:
             if saved_original_selfattn_forward is not None:  # Check if we successfully restore the attention module
@@ -359,7 +363,6 @@ class Script(scripts.Script):
             sag_token_perturbed_scale = token_perturbed_scale
             current_sag_guidance_scale = scale
             self.custom_resolution = custom_resolution
-            current_seed = p.seed
            
             if attn != "dynamic":
                 current_attn = attn
