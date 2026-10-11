@@ -431,7 +431,7 @@ class Script(scripts.Script):
         if sag_attn_target == "dynamic":
             if current_sag_block_index == -1:
                 current_attn = "middle"
-                org_attn_module = get_attention_module_for_block(shared.sd_model.model.diffusion_model.middle_block, '1')
+                org_attn_module = get_attention_module(current_attn)
                 saved_original_selfattn_forward = org_attn_module.forward
                 org_attn_module.forward = xattn_forward_log.__get__(org_attn_module, org_attn_module.__class__)
                 current_sag_block_index = 0
