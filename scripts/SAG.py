@@ -589,7 +589,7 @@ class Script(scripts.Script):
                     case 1: return sag_sd_attn["block5"]()
                     case 2: return sag_sd_attn["block8"]()
             else:
-                return sag_sdxl_attn[attn]()
+                return sag_sd_attn[attn]()
         else:
             return shared.sd_model.model.diffusion_model.middle_block[1].transformer_blocks[0].attn1   
 
